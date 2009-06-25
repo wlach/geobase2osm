@@ -7,8 +7,6 @@ import sys
 import codecs
 import optparse
 import gzip
-import osgeo.ogr
-import osgeo.osr
 from shapely.geometry import LineString
 from shapely.geometry import Point
 from shapely.geometry import Polygon
@@ -94,12 +92,6 @@ TagList=set(('nrn:nid',
             'nrn:structureType',
             'nrn:acquisitionTechnique',
             'nrn:junctionType'))
-
-CRS83=osgeo.osr.SpatialReference()
-CRS83.ImportFromEPSG(4617)
-WGS84=osgeo.osr.SpatialReference()
-WGS84.ImportFromEPSG(4326)
-transform=osgeo.osr.CoordinateTransformation(CRS83,WGS84)
 
 import string
 import sys
@@ -212,12 +204,8 @@ class GeomParser:
           coord = coordset.split(',')
           if len(coord) == 2:
             if len(coord[0]) > 0 and len(coord[1] ) > 0:
-              #print "Transform %s %s" % (coord[0],coord[1])
-              coord_t=transform.TransformPoint(float(coord[0]),float(coord[1]),0.0)
-              lon = coord_t[0]
-              lat = coord_t[1]
-              self.createNode(lon,lat)
-              #Append coordinates to coords array
+              (lon, lat) = (float(coord[0]), float(coord[1]))
+              self.createNode(lon, lat)
               self.coords.append([lon,lat])
             else: 
               printStr( "Could not add node due to empty coordinate" )
