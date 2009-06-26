@@ -74,9 +74,6 @@ highway["Service Lane"] = "service"
 highway["Rapid Transit"] = "unclassified"
 highway["Winter"] = "unclassified"
 
-
-    
-
 TagList=set(('nrn:nid',
             'nrn:ferrySegmentId',
             'nrn:roadSegmentId',
@@ -204,8 +201,7 @@ class GeomParser:
           coord = coordset.split(',')
           if len(coord) == 2:
             if len(coord[0]) > 0 and len(coord[1] ) > 0:
-              (lon, lat) = (float(coord[0]), float(coord[1]))
-              self.createNode(lon, lat)
+              (lon, lat) = (float(coord[0]), float(coord[1]))              
               self.coords.append([lon,lat])
             else: 
               printStr( "Could not add node due to empty coordinate" )
@@ -225,8 +221,6 @@ class GeomParser:
           return self.coords[-1][1]
     def endLon(self):
           return self.coords[-1][0]
-    def createNode(self,lon,lat):
-          return
     
 #
 # This class represents an OSM way.
@@ -241,18 +235,17 @@ class Way(GeomParser):
     attribution = "GeoBase®"
     source = "Geobase_Import_2009"
     
-    def __init__(self,id,type,boundary,nameHash):
+    def __init__(self,id,type,boundary,nameHash,nodes,nodehash):
           GeomParser.__init__(self)
-          self.nodeid=id         
           self.boundary=boundary
           self.nameHash=nameHash
-          self.osm_nodes=[]
-          self.way_element=None
+          self.nodes = nodes
+          self.nodehash = nodehash
+
           self.string=None
           self.completed=False
           self.tags={}
-          self.way_element = ET.Element("way",visible="true",id=str(self.nodeid))
-          self.nodeid-=1
+          self.way_element = ET.Element("way",visible="true",id=str(id))
           self.placeName=None
           self.outOfBounds=False
           
@@ -261,7 +254,6 @@ class Way(GeomParser):
     def isSkipped(self):
         return self.outOfBounds
     def startElement(self,name,attributes):
-
         if name in TagList:
             self.waiting=True
             self.string=None
@@ -269,10 +261,6 @@ class Way(GeomParser):
         elif  name == 'gml:coordinates':
             self.string = None
             self.waitingCoord = True
-
-    
- 
-
 
     def endElement(self,name):
         # Prepare a cleaned and stripped text string
@@ -378,10 +366,21 @@ class Way(GeomParser):
           #Exclude nodes that are not in the bounding region.
           shape=LineString(self.coords)
           #print "Checking Intersection on %s"  % str(self.coords)      
-          if (self.boundary<>None and  self.boundary.intersects(shape)==False ):
+          if (self.boundary<>None and self.boundary.intersects(shape)==False ):
               #Mark this object as excluded + incomplete
               self.outOfBounds=True
-              return
+              return          
+
+          for coord in self.coords:
+              key = str(coord[0]) + '-' + str(coord[1])
+              if not self.nodehash.get(key):
+                  node_id = str(len(self.nodes))
+                  newnode = ET.Element("node", visible='true', id=node_id, lat=str(coord[1]), lon=str(coord[0]))
+                  self.nodes.append(newnode)
+                  self.nodehash[key] = node_id
+
+              self.way_element.append(ET.Element('nd', ref=self.nodehash[key]))
+                  
                  
           self.localize()          
           # Catch all transcanada/yellowhead highway segments that we may have missed  
@@ -619,39 +618,6 @@ class Way(GeomParser):
               if ref == 1 or ref == 2 or ref == 3:
                 self.tags['highway'] = 'trunk'
 
-    #Returns a node object (a XML celement for the OSM node)
-    #that is part of the current way and located at the coordinates
-    #specified.
-    def nodeAt(self,coords):
-          for n in self.osm_nodes:
-                if n.get('lat')==coords[1] and n.get('lon')==coords[0]:
-                      return n
-          return None
-    #Replaces the reference to nodeToReplace with
-    #a reference to the id of nodeToKeep.
-    #nodeToReplace then becomes orphaned.
-    def replaceNode(self,nodeToReplace,nodeToKeep):
-          #Find the nd ref for the node.
-          for nd in self.way_element.getiterator('nd'):
-                if nd.get('ref')==nodeToReplace.get('id'):
-                      #found
-                      print "Replacing node " + nd.get('ref') + ' with ' +nodeToKeep.get('id')
-                      nd.set('ref',nodeToKeep.get('id'))
-                      #Remote from the list
-                      self.osm_nodes.remove(nodeToReplace)
-                      self.osm_nodes.append(nodeToKeep)
-                      break
-    def createNode(self,lon,lat):
-          node = ET.Element("node", visible='true', id=str(self.nodeid), lat=str(lat), lon=str(lon))
-          
-          # Add default tags
-          # Add a reference to this node to the current way
-          self.way_element.append(ET.Element('nd', ref=str(self.nodeid)))
-          self.osm_nodes.append(node)
-          self.nodeid -= 1
-
-
-
 class Junction(GeomParser):
       def __init__(self,boundary,nodeid):
             GeomParser.__init__(self)
@@ -699,16 +665,12 @@ class geomHandler(sax.ContentHandler):
   boundary=None  
   current_way=None  
   nodeid = -1000
-  junctionList=[]
   currentJunction=None
 
-  #
-  # An index that maps the lon_lat of a point to any Way objects that
-  # either start or end at that coordinate pair
-  way_index={}
-  
+  nodes=[]
+  nodehash={}
+
   ways=[]
-  
   
   def counter(self):
     if self.count % 5000 == 0:
@@ -743,13 +705,13 @@ class geomHandler(sax.ContentHandler):
     # A ferry connection
     elif name == 'nrn:FerryConnectionSegment':
       self.ferrySegment = True
-      self.current_way=Way(self.nodeid,'nrn:FerryConnectionSegment',self.boundary,self.nameHash)      
+      self.current_way=Way(len(self.ways),'nrn:FerryConnectionSegment',self.boundary,self.nameHash,self.nodes,self.nodehash)      
       
       self.counter()
       
     # A road 'way'
     elif name == "nrn:RoadSegment":
-      self.current_way=Way(self.nodeid,'nrn:RoadSegment',self.boundary,self.nameHash)   
+      self.current_way=Way(len(self.ways),'nrn:RoadSegment',self.boundary,self.nameHash,self.nodes,self.nodehash)
       self.counter()
     
     elif self.current_way != None:
@@ -768,42 +730,15 @@ class geomHandler(sax.ContentHandler):
         if self.current_way.isCompleted():
             if not self.current_way.isSkipped():
                 self.ways.append(self.current_way)
-                self.nodeid=self.current_way.nodeid
-                for c in self.current_way.coords:
-                      
-                      key=str(c[0])+'_'+str(c[1])
-                      if self.way_index.has_key(key):
-                            self.way_index[key].append(self.current_way)
-                      else:
-                            self.way_index[key]=[self.current_way]
             self.current_way=None
     elif self.currentJunction<>None:
           self.currentJunction.endElement(name)
           if self.currentJunction.isCompleted():
-                if self.currentJunction.isIntersection() and self.currentJunction.isSkipped()==False:
-                      self.junctionList.append(self.currentJunction)
                 self.currentJunction=None              
 
     self.depth = self.depth - 1
     return
 
-  def mergeNodes(self,coords):
-        #Get the list of nodes + the ways that terminate at those nodes
-        #merge them into a common node and update the other ways.
-        key=(str(coords[0])+'_'+str(coords[1]))
-        if self.way_index.has_key(key) :
-              way_list = self.way_index[key]
-              keep = way_list[0].nodeAt(coords)
-              keep_id = keep.get('id')
-              for w in way_list[0:]:
-                   dup_node = w.nodeAt(coords)
-                   w.replaceNode(dup_node,keep)
-  
-        return
-
-
-
-        
   def characters(self,string):
       if self.current_way != None:
           self.current_way.characters(string)
@@ -853,32 +788,6 @@ def setToString(tagset):
     return string
 
 suppressoutput = False
-
-
-#
-# Some datasets such as ontario
-# have multile roadSegments with the same nid
-# that describe a single road broken into
-# multiple segments.  This really should
-# be different nids connected with a junction.
-#
-# Here we will connect the nids
-#
-def connectDuplicateNid(handler):
-       
-    #For any ways that have a common node point
-    for location in handler.way_index:
-          waylist=handler.way_index[location]
-          for idx  in range(len(waylist)):
-                w1 = waylist[idx]
-                for w2 in waylist[idx+1:]:
-                      if w1.nid==w2.nid:
-                            #Match, now find common node.
-                            for c1 in w1.coords:
-                                  c1_s=(str(c1[0]),str(c1[1]))
-                                  if w2.nodeAt(c1_s)!=None:
-                                        handler.mergeNodes(c1_s)
-
 
 
 def printStr(s):
@@ -948,14 +857,6 @@ def main():
   sax.parse(open(options.geomfile), handler)
   printStr( "Parse of geomfile done" )
 
-  for junct in handler.junctionList:
-    #Find the 'nodes' at these coordinates and merge them IF
-    # the junction is an intersection
-    handler.mergeNodes((str(junct.startLon()),str(junct.startLat())))
-
-
-  connectDuplicateNid(handler)
-  
    #
    # If we ran with a standalone list, then we need to generate the standalone
    # output file.
@@ -964,14 +865,9 @@ def main():
   
   complete_osm=ET.Element("osm", generator='geobase2osm', version='0.5')
   included_nodes=set()
-
-             
   
-  for w in handler.ways:
-    for n in w.osm_nodes:
-        if n not in included_nodes:
-            included_nodes.add(n)
-            complete_osm.append(n)
+  for n in handler.nodes:
+      complete_osm.append(n)
   for w in handler.ways:
       complete_osm.append(w.way_element)
   
